@@ -29,6 +29,8 @@ struct SetpointData {
 struct SensorData {
   float fltSnTemp;
   float fltSnHum;
+  bool fanStatus;
+  bool humidifierStatus;
 };
 
 //VARIABLES
@@ -66,33 +68,34 @@ void scrollMessage() {
 bool getRadioStatus(){ //TODO: Blink leds, send a message, etc. to indicate failure
     if(radio.failureDetected){
     radio.begin();                        // Attempt to re-configure the radio with defaults
-    radio.failureDetected = 0;            // Reset the detection value
     radio.openWritingPipe(master_address);  // Re-configure pipe addresses
     radio.openReadingPipe(0, slave_address);  // Re-configure pipe addresses
     Serial.println("Failure detected!"); //TODO: Remove
     return false;
   } else {
+    Serial.println("Success!"); //TODO: Remove
     return true;
   }
+  radio.failureDetected = 0;            // Reset the detection value
 }
 
 void receiveSensorData(){
   radio.startListening(); //This sets the module as receiver
   if ( radio.available() ) {
     radio.read(&snData, sizeof(SensorData));
-
+//     getRadioStatus();
     if (state == 0) {
       displayData();
     }
 
     //TODO: Remove
-    Serial.print("RX: Sensor Temperature: ");
-    Serial.print(snData.fltSnTemp); 
-    Serial.print(" Sensor Humidity: ");
-    Serial.println(snData.fltSnHum);
+//    Serial.print("RX: Sensor Temperature: ");
+//    Serial.print(snData.fltSnTemp); 
+//    Serial.print(" Sensor Humidity: ");
+//    Serial.println(snData.fltSnHum);
   }
 
-  getRadioStatus();
+ 
 }
 
 void transmitSetpointData(){
@@ -101,12 +104,13 @@ void transmitSetpointData(){
     radio.stopListening(); //This sets the module as transmitter
     radio.write(&spData, sizeof(SetpointData)); //Sending the data
     timer = 20000;
+    getRadioStatus();
 
     //TODO: Remove
-    Serial.print("TX: Setpoint Temperature: ");
-    Serial.print(spData.fltSPTemp); 
-    Serial.print(" Setpoint Humidity: ");
-    Serial.println(spData.fltSPHum);
+//    Serial.print("TX: Setpoint Temperature: ");
+//    Serial.print(spData.fltSPTemp); 
+//    Serial.print(" Setpoint Humidity: ");
+//    Serial.println(spData.fltSPHum);
   }
 }
 
@@ -168,18 +172,19 @@ void printErrorMessage() {
 
 void setup() {
   // put your setup code here, to run once:
+  pinMode(38, OUTPUT);
+  pinMode(42, OUTPUT);
+  pinMode(38, OUTPUT);
+  pinMode(42, OUTPUT);
+  
 
   Serial.begin(9600);
 
   //Start communication
   radio.begin();
+  radio.openWritingPipe(master_address); //set the address
+  radio.openReadingPipe(0, slave_address); //set the address
 
-  //set the address
-  radio.openWritingPipe(master_address);
-  
-  //set the address
-  radio.openReadingPipe(0, slave_address);
-  
   lcd.init();                    
   lcd.backlight();
 
@@ -224,7 +229,21 @@ void loop() {
   
   // when setpoint has been entered, data will then get transmitted 
   if (state == 0) {
-    transmitData();
+    transmitSetpointData();
+
+//    Serial.println(snData.fanStatus);
+//    Serial.println(snData.humidifierStatus);
+    if(snData.fanStatus){
+      digitalWrite(38,HIGH);
+    } else {
+      digitalWrite(38,LOW);
+    }
+    
+    if(snData.humidifierStatus){
+      digitalWrite(42,HIGH);
+    } else {
+      digitalWrite(42,LOW);
+    }
   }
 
   if (state == 1) {
@@ -249,7 +268,7 @@ void loop() {
       
     } else if (key == 'D'){ // when "D" is clicked
       if (spData.fltSPTemp != 0) { // checks if setpoint data was entered previously
-        displayData(); // display home screen       
+        displayData();
         strSPTemp = "";
         state = 0;
       }
@@ -268,7 +287,7 @@ void loop() {
         printHumiditySP();
       } else {
         spData.fltSPHum = strSPHum.toFloat();
-        displayData();        
+        displayData();
         strSPHum = "";
         state = 0;
       }
@@ -277,7 +296,7 @@ void loop() {
       printHumiditySP();
     } else if (key == 'D'){
       if (spData.fltSPHum != 0) {
-        displayData();        
+        displayData();
         strSPHum = "";
         state = 0;
       }
