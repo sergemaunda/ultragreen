@@ -5,34 +5,37 @@
 #include <RF24.h>
 #include <PID_v1.h>
 
-#define DHTPIN 12     // DHT11 Sensor Pin
-#define DHTTYPE DHT22   // DHT 22 
-#define fan 10
-#define humidifier 9
-#define humidityLED 42
-#define temperatureLED 36
-#define pushButton 11
+#define DHTPIN 12             // DHT11 Sensor Pin
+#define DHTTYPE DHT22         // DHT Sensor Type 
+#define fan 10                // Fan pin
+#define humidifier 9          // Humidifier pin
+#define humidityLED 42        // LED pin to indicate low humidity level
+#define temperatureLED 36     // LED pin to indicate high temperature level
+#define pushButton 11         // Button pin for changing display screen
 
 //CONSTANTS
-//address through which two modules communicate.
+//Address through which two modules communicate.
 const byte master_address[6] = "00001";
 const byte slave_address[6] = "00002";
 
-// Temperature Gains
-double Kp_t = 6.00; //proportional gain
-double Ki_t = 2.00; //integral gain
-double Kd_t = 5.00; //derivative gain
+//Temperature Gain Parameters
+const double Kp_t = 6.00; //proportional gain
+const double Ki_t = 2.00; //integral gain
+const double Kd_t = 5.00; //derivative gain
 
-// Humidity Gains
-double Kp_h = 6.00; //proportional gain
-double Ki_h = 2.00; //integral gain
-double Kd_h = 5.00; //derivative gain
+//Humidity Gain Parameters
+const double Kp_h = 6.00; //proportional gain
+const double Ki_h = 2.00; //integral gain
+const double Kd_h = 5.00; //derivative gain
 
+//STRUCTURES
+//Store temperature and humidity setpoints received from the control centre
 struct SetpointData {
   double fltSPTemp;
   double fltSPHum;
 };
 
+//Store temperature and humidity readings from the DHT22 sensor
 struct SensorData {
   double fltSnTemp;;
   double fltSnHum;
@@ -49,86 +52,17 @@ double humidifierOutput, humidifierPercentage;
 float oldTemperature, oldHumidity;
 long timePast;
 long timeNow;
-int state = 0;
+int buttonState, state = 0;
 bool changeScreen = true;
+bool buttonPressed = false;
 
 //INSTANCES
-//Temperature Control - Cascade PID Controller
-PID tempPID(&snData.fltSnTemp, &fanOutput, &spData.fltSPTemp, Kp_t, Ki_t, Kd_t, REVERSE);
-PID humPID(&snData.fltSnHum, &humidifierOutput, &spData.fltSPHum, Kp_h, Ki_h, Kd_h, DIRECT);
-DHT dht(DHTPIN, DHTTYPE); // Initialize DHT sensor for normal 16mhz Arduino
-RF24 radio(7, 8);  // CE, CSN - create an RF24 object
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+PID tempPID(&snData.fltSnTemp, &fanOutput, &spData.fltSPTemp, Kp_t, Ki_t, Kd_t, REVERSE); //Temperature PID Controller
+PID humPID(&snData.fltSnHum, &humidifierOutput, &spData.fltSPHum, Kp_h, Ki_h, Kd_h, DIRECT); //Humidity PID Controller
+DHT dht(DHTPIN, DHTTYPE); //DHT Sensor Object 
+RF24 radio(7, 8);  //CE, CSN - RF24 object
+LiquidCrystal_I2C lcd(0x27, 16, 2); //LCD Object
 
-
-bool getRadioStatus(){ //TODO: Blink leds, send a message, etc. to indicate failure
-  if(radio.failureDetected){
-    radio.begin();                        // Attempt to re-configure the radio with defaults
-    radio.openWritingPipe(slave_address);  // Re-configure pipe addresses
-    radio.openReadingPipe(0, master_address);  // Re-configure pipe addresses
-    Serial.println("Failure detected!"); //TODO: Remove
-    return false;
-  } else {
-    return true;
-  }
-  radio.failureDetected = 0;            // Reset the detection value
-}
-
-void transmitSensorData() {
-
-    radio.stopListening(); //This sets the module as transmitter
-    radio.write(&snData, sizeof(SensorData)); //Sending the data
-    getRadioStatus();
-//    if (getRadioStatus()) {
-      // SERIAL MONITOR
-//      Serial.print("Sensor Temperature: ");
-//      Serial.print(snData.fltSnTemp); 
-//      Serial.print(" | Sensor Humidity: ");
-//      Serial.println(snData.fltSnHum);
-//      Serial.println(); 
-//    }
-}
-
-void receiveSetpointData(){
-  //RECEIVER
-  radio.startListening(); //This sets the module as receiver
-  if (radio.available()) {
-    radio.read(&spData, sizeof(SetpointData));
-    if (getRadioStatus()) {
-      //SETPOINT
-//      Serial.print("Setpoint Temperature: ");
-//      Serial.println(spData.fltSPTemp); 
-//      Serial.print("Setpoint Humidity: ");
-//      Serial.println(spData.fltSPHum);
-      // SENSOR READING
-//      Serial.print("Sensor Temperature: ");
-//      Serial.println(snData.fltSnTemp); 
-//      Serial.print("Sensor Humidity: ");
-//      Serial.println(snData.fltSnHum);
-      // OUTPUT
-//      Serial.print("Fan Output: ");
-//      Serial.print(fanPercentage);
-//      Serial.println("%");
-//      Serial.print("Humidifier Output: ");
-//      Serial.print(humidifierPercentage);
-//      Serial.println("%");
-//      Serial.println();
-
-      //SERIAL PLOTTER
-      // TEMPERATURE
-//      Serial.print(spData.fltSPTemp); //orange
-//      Serial.print(" ");
-//      Serial.println(snData.fltSnTemp); // blue
-//      Serial.println("Setpoint_Temperature Actual_Temperature");
-      // HUMIDITY
-//      Serial.print(spData.fltSPHum); //orange
-//      Serial.print(" ");
-//      Serial.println(snData.fltSnHum); // blue
-//      Serial.println("Setpoint_Humidity Actual_Humidity");
-    }
-  }
-  
-}
 
 void setup() {
   while (!Serial);
@@ -146,6 +80,7 @@ void setup() {
 
   //Set pin for button
   pinMode(pushButton,INPUT_PULLUP);
+  
   //Start DHT sensor
   dht.begin(); 
 
@@ -178,7 +113,112 @@ void setup() {
   delay(2000);
 }
 
-void displayTemperature() {
+void loop() {
+  //receive setpoint data
+  receiveSetpointData();
+
+  //read button state
+  readButtonState();
+  
+  //time past in miliseconds
+  timeNow = millis();
+  
+  //Wait a 2 second between sensor measurements
+    if (timeNow - timePast >= 2000) {
+      
+      //read new temperature and humidity
+      snData.fltSnHum = dht.readHumidity();
+      snData.fltSnTemp = dht.readTemperature();
+
+      //Display new temperature and humidity readings to LCD
+      displayScreen();
+      
+      //check if temperature and humidity readings changed
+      if (snData.fltSnTemp != oldTemperature || snData.fltSnHum != oldHumidity ) {
+        
+        if (fanOutput > 0){
+          snData.fanStatus = true;
+        } else {
+          snData.fanStatus = false;
+        }
+    
+        if (humidifierOutput > 0){
+          snData.humidifierStatus = true;
+        } else {
+          snData.humidifierStatus = false;
+        }
+        
+        //transmit sensor data only when temperature and humidity readings changed
+        transmitSensorData();
+        
+        //update with new readings of temperature and humidity
+        oldTemperature = snData.fltSnTemp;
+        oldHumidity = snData.fltSnHum;
+      }
+
+      //reset time past to current time
+      timePast = timeNow;
+  }
+
+  //check if readings from sensor are valid
+  if (!isnan(snData.fltSnHum) || !isnan(snData.fltSnTemp)) {
+    //calculate new PWM output to control temperature and humidity
+    tempPID.Compute();
+    humPID.Compute();
+
+    //output PWM signals to fan and humidifier to control temperature and humidity
+    analogWrite(fan, fanOutput);
+    analogWrite(humidifier, humidifierOutput);
+  }
+}
+
+// FUNCTION DECLARATIONS
+
+//BUTTON - Read button state for changing screen displays
+void readButtonState() {
+    buttonState = digitalRead(pushButton);
+
+  if (buttonState == 1) {
+      buttonPressed = true;
+  }
+
+  if (buttonState == 0) {
+    if (buttonPressed) {
+      switch (state) {
+        case 0:
+          state = 1;
+          break;
+        case 1:
+          state = 0;
+          break;
+      }
+    }
+    buttonPressed = false;
+  }
+}
+
+//DISPLAY - used to display temperature and humidity screens
+void displayScreen() {
+  switch (state){
+  case 0:
+    if (changeScreen){
+      temperatureDisplay();
+      changeScreen = false;
+    } else {
+      humidityDisplay();
+      changeScreen = true;
+    }
+  case 1:
+    if (changeScreen){
+      humidityDisplay(); 
+    } else {
+      temperatureDisplay();
+    }
+  }
+}
+
+//HUMIDITY DISPLAY
+void temperatureDisplay() {
     fanPercentage = (fanOutput/255.00)*100;
     lcd.clear();
     lcd.setCursor(0, 0);
@@ -187,17 +227,17 @@ void displayTemperature() {
     lcd.setCursor(9, 0);
     lcd.print("A:");
     lcd.print(snData.fltSnTemp);
-//    lcd.print((char)223);
-//    lcd.print("C");
     lcd.setCursor(0, 1);
     lcd.print("Fan Speed: ");
     lcd.print(int(fanPercentage));
     lcd.print("%");
 }
 
-void displayHumidity() {
+
+//TEMPERATURE DISPLAY
+void humidityDisplay() {
     humidifierPercentage = (humidifierOutput/255.00)*100;
-lcd.clear();
+    lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("S:");
     lcd.print(spData.fltSPHum);
@@ -210,88 +250,32 @@ lcd.clear();
     lcd.print("%");
 }
 
-void loop() {
-  //receive setpoint data
-  receiveSetpointData();
-  bool buttonPressed;
-  int buttonState = digitalRead(pushButton);
+//TRANSMITTER - Transmit sensor readings, fan and humidifier status
+void transmitSensorData() {
+    radio.stopListening(); //This sets the module as transmitter
+    radio.write(&snData, sizeof(SensorData)); //Sending the data
+    getRadioStatus();
+}
 
-  if (buttonState == 1) {
-      //read push button state
-      buttonPressed = true;
+//RECEIVER - Receive temperature and humidity setpoints
+void receiveSetpointData(){
+  radio.startListening(); //This sets the module as receiver
+  if (radio.available()) {
+    radio.read(&spData, sizeof(SetpointData));
+    getRadioStatus();
   }
+}
 
-  if (buttonState == 0) {
-    if (buttonPressed) {
-      switch (state) {
-        case 0:
-          state = 0;
-          changeScreen = !changeScreen;
-          break;
-        case 1:
-          state = 1;
-          break;
-      }
-       buttonPressed = false;
-    }
+//FAILURE DETECTION - Detect if there is a wireless communication malfunction
+bool getRadioStatus(){
+  if(radio.failureDetected){
+    radio.begin();                        // Attempt to re-configure the radio with defaults
+    radio.openWritingPipe(slave_address);  // Re-configure pipe addresses
+    radio.openReadingPipe(0, master_address);  // Re-configure pipe addresses
+    //TODO: Blink leds, send a message, etc. to indicate failure
+    return false;
+  } else {
+    return true;
   }
-
-  timeNow = millis();
-  //Wait a 2 second between measurements.
-    if (timeNow - timePast >= 2000) {
-      
-      //read new temperature and humidity
-      snData.fltSnHum = dht.readHumidity();
-      snData.fltSnTemp = dht.readTemperature();
-      //check if temperature and humidity readings changed
-      
-      if (snData.fltSnTemp != oldTemperature || snData.fltSnHum != oldHumidity ) {
-        //transmit sensor data only when temperature and humidity readings changed
-        transmitSensorData();
-        
-        //update with new readings of temperature and humidity
-        oldTemperature = snData.fltSnTemp;
-        oldHumidity = snData.fltSnHum;
-      }
-
-      switch (state){
-        case 0:
-          if (changeScreen){
-            displayTemperature();
-          } else {
-            displayHumidity();
-          }
-        case 1:
-          if (changeScreen){
-            displayTemperature();
-            changeScreen = false;
-          } else {
-            displayHumidity();
-            changeScreen = true;
-          }
-      }
-      
-      timePast = timeNow;
-  }
-
-  if (!isnan(snData.fltSnHum) || !isnan(snData.fltSnTemp)) {
-    // calculate new PWM output 
-    tempPID.Compute();
-    humPID.Compute();
-
-    if (fanOutput > 0){
-      snData.fanStatus = true;
-    } else {
-      snData.fanStatus = false;
-    }
-
-    if (humidifierOutput > 0){
-      snData.humidifierStatus = true;
-    } else {
-      snData.humidifierStatus = false;
-    }
-  
-    analogWrite(fan, fanOutput);
-    analogWrite(humidifier, humidifierOutput);
-  }
+  radio.failureDetected = 0;            // Reset the detection value
 }
