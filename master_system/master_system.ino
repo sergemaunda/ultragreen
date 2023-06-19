@@ -70,10 +70,8 @@ bool getRadioStatus(){ //TODO: Blink leds, send a message, etc. to indicate fail
     radio.begin();                        // Attempt to re-configure the radio with defaults
     radio.openWritingPipe(master_address);  // Re-configure pipe addresses
     radio.openReadingPipe(0, slave_address);  // Re-configure pipe addresses
-    Serial.println("Failure detected!"); //TODO: Remove
     return false;
   } else {
-    Serial.println("Success!"); //TODO: Remove
     return true;
   }
   radio.failureDetected = 0;            // Reset the detection value
@@ -105,12 +103,6 @@ void transmitSetpointData(){
     radio.write(&spData, sizeof(SetpointData)); //Sending the data
     timer = 20000;
     getRadioStatus();
-
-    //TODO: Remove
-//    Serial.print("TX: Setpoint Temperature: ");
-//    Serial.print(spData.fltSPTemp); 
-//    Serial.print(" Setpoint Humidity: ");
-//    Serial.println(spData.fltSPHum);
   }
 }
 
@@ -171,19 +163,16 @@ void printErrorMessage() {
 }
 
 void setup() {
-  // put your setup code here, to run once:
-  pinMode(38, OUTPUT);
-  pinMode(42, OUTPUT);
-  pinMode(38, OUTPUT);
-  pinMode(42, OUTPUT);
-  
-
   Serial.begin(9600);
 
   //Start communication
   radio.begin();
   radio.openWritingPipe(master_address); //set the address
   radio.openReadingPipe(0, slave_address); //set the address
+  
+  //LED Pin Configuration
+  pinMode(38, OUTPUT);
+  pinMode(42, OUTPUT);
 
   lcd.init();                    
   lcd.backlight();
